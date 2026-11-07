@@ -621,6 +621,59 @@ def print_summary(results):
     print(f"\n실패 원인 분류: {summary}")
 
 
+def filter_weight(filt):
+    """필터의 가중치 합(모든 칸의 합)."""
+    total = 0.0
+    for row in filt.cells:
+        for value in row:
+            total += value
+    return total
+
+
+def print_tie_diagnosis(results, filters):
+    """동점(수치 비교)으로 실패한 케이스를 '가중치 합으로 나눈 점수'로 다시 비교해 원인을 진단한다.
+
+    참고용 분석이며 공식 PASS/FAIL 집계에는 반영하지 않는다.
+    """
+    ties = [r for r in results if r["cause"] == CAUSE_NUMERIC]
+    if not ties:
+        return
+    print_section("[5] 참고: 동점 실패 케이스 원인 진단")
+    print("Cross·X 필터는 가중치 합(총량)이 서로 달라서, 원본 MAC 점수만으로는")
+    print("'모양이 얼마나 일치하는지'가 아니라 '필터 총량'의 영향이 섞입니다.")
+    print("각 점수를 그 필터의 가중치 합으로 나눈 정규화 점수로 다시 비교합니다.")
+    print("(참고용 분석이며 위 PASS/FAIL 집계에는 반영하지 않습니다.)\n")
+
+    rows = []
+    matched = 0
+    for result in ties:
+        group = filters[result["size"]]
+        weight_cross = filter_weight(group[CROSS])
+        weight_x = filter_weight(group[X])
+        if weight_cross <= 0 or weight_x <= 0:
+            rows.append([result["key"], "-", "-", "정규화 불가", result["expected"]])
+            continue
+        norm_cross = result["cross"] / weight_cross
+        norm_x = result["x"] / weight_x
+        decision = judge(norm_cross, norm_x, CROSS, X) or UNDECIDED
+        if decision == result["expected"]:
+            matched += 1
+        rows.append([
+            result["key"],
+            f"{result['cross']:.4g} / {weight_cross:.4g} = {norm_cross:.3f}",
+            f"{result['x']:.4g} / {weight_x:.4g} = {norm_x:.3f}",
+            decision,
+            result["expected"],
+        ])
+    print_table(
+        ["케이스", "Cross: 점수/가중치 합", "X: 점수/가중치 합", "재판정", "expected"],
+        rows,
+        ["left", "right", "right", "left", "left"],
+    )
+    print(f"\n→ 동점 {len(ties)}건 중 {matched}건이 정규화 후 expected와 일치합니다.")
+    print("  MAC 계산 로직이 아니라, 필터 가중치 설계 때문에 원본 점수가 같아진 데이터 문제임을 뜻합니다.")
+
+
 def run_json_mode(data_path):
     """모드 2: 필터 로드 → 패턴 로드/검증 → MAC·판정·PASS/FAIL → 성능 분석 → 결과 요약."""
     print_section("[1] 필터 로드")
@@ -646,6 +699,7 @@ def run_json_mode(data_path):
 
     print_section("[4] 결과 요약")
     print_summary(results)
+    print_tie_diagnosis(results, filters)
     return results
 
 
