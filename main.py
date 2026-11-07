@@ -365,11 +365,18 @@ def read_matrix(title, size=3):
 
     - 열 개수가 다르거나 숫자가 아니면: 안내 후 그 줄을 다시 입력받는다.
     - 줄을 다 채우기 전에 빈 줄(Enter)을 입력하면: 행 수 부족 안내 후 처음부터 다시 입력받는다.
+    - (보너스 2) 첫 줄에 cross 또는 x를 입력하면 패턴 생성기로 자동 생성한다.
     """
-    print(f"{title} ({size}줄 입력, 공백 구분)")
+    print(f"{title} ({size}줄 입력, 공백 구분 / cross 또는 x 입력 시 자동 생성)")
     rows = []
     while len(rows) < size:
         line = input().strip()
+        if not rows and line.lower() in ("cross", "x", "+"):
+            label = normalize_label(line)
+            grid = GENERATORS[label](size)
+            print(f"→ 패턴 생성기로 {size}×{size} {label} 생성:")
+            grid.show()
+            return grid
         if line == "" and not rows:
             print(f"입력 형식 오류: 빈 줄입니다. 각 줄에 {size}개의 숫자를 공백으로 구분해 입력하세요.")
             continue
@@ -643,18 +650,75 @@ def run_json_mode(data_path):
 
 
 # =============================================================
-# 8. 메뉴 / 실행
+# 8. 모드 3: 패턴 생성기 + 크기별 성능 분석 (보너스 2)
+# =============================================================
+MAX_GENERATOR_SIZE = 201  # 생성기 최대 크기
+SHOW_LIMIT = 25  # 이 크기까지만 패턴을 화면에 출력
+
+
+def read_odd_size():
+    """패턴 크기 N(3 이상 MAX_GENERATOR_SIZE 이하 홀수)을 입력받는다."""
+    guide = f"3 이상 {MAX_GENERATOR_SIZE} 이하의 홀수를 입력하세요."
+    while True:
+        raw = input(f"패턴 크기 N (3~{MAX_GENERATOR_SIZE} 홀수): ").strip()
+        if raw == "":
+            print(f"입력 형식 오류: 빈 입력입니다. {guide}")
+            continue
+        try:
+            size = int(raw)
+        except ValueError:
+            print(f"입력 형식 오류: '{raw}'은(는) 정수가 아닙니다. {guide}")
+            continue
+        if size < 3 or size > MAX_GENERATOR_SIZE or size % 2 == 0:
+            print(f"입력 형식 오류: 가운데 칸이 하나인 패턴을 만들기 위해 {guide}")
+            continue
+        return size
+
+
+def run_generator_mode():
+    """모드 3: N 입력 → Cross/X 자동 생성 → 생성 패턴 판정 → 크기별 성능 분석."""
+    print_section("[1] 패턴 생성")
+    size = read_odd_size()
+    patterns = {CROSS: generate_cross(size), X: generate_x(size)}
+    for label, grid in patterns.items():
+        print(f"\n{label} ({size}×{size}, 값이 1인 칸 {2 * size - 1}개)")
+        if size <= SHOW_LIMIT:
+            grid.show()
+        else:
+            print(f"  (N이 {SHOW_LIMIT}보다 커서 출력 생략)")
+
+    print_section("[2] 생성 패턴 판정 (필터 = 생성된 Cross/X)")
+    for label, pattern in patterns.items():
+        cross_score = mac_2d(pattern, patterns[CROSS])
+        x_score = mac_2d(pattern, patterns[X])
+        decision = judge(cross_score, x_score, CROSS, X) or UNDECIDED
+        status = "PASS" if decision == label else "FAIL"
+        print(f"--- 생성 {label} 패턴 ---")
+        print(f"Cross 점수: {cross_score!r}")
+        print(f"X 점수: {x_score!r}")
+        print(f"판정: {decision} | expected: {label} | {status}")
+
+    print_section(f"[3] 성능 분석 (평균/{REPEAT}회)")
+    cases = []
+    for n in sorted(set(BENCH_SIZES + [size])):
+        cases.append((n, generate_cross(n), generate_cross(n), "패턴 생성기 (Cross)"))
+    print_benchmark(benchmark(cases))
+
+
+# =============================================================
+# 9. 메뉴 / 실행
 # =============================================================
 def choose_mode():
     print("\n[모드 선택]")
     print("1. 사용자 입력 (3x3)")
     print("2. data.json 분석")
+    print("3. 패턴 생성기 + 크기별 성능 분석 (보너스)")
     print("0. 종료")
     while True:
         choice = input("선택: ").strip()
-        if choice in ("0", "1", "2"):
+        if choice in ("0", "1", "2", "3"):
             return choice
-        print("⚠️ 0, 1, 2 중 하나를 입력하세요.")
+        print("⚠️ 0, 1, 2, 3 중 하나를 입력하세요.")
 
 
 def main(argv=None):
@@ -668,8 +732,10 @@ def main(argv=None):
                 break
             if choice == "1":
                 run_user_mode()
-            else:
+            elif choice == "2":
                 run_json_mode(data_path)
+            else:
+                run_generator_mode()
     except (KeyboardInterrupt, EOFError):
         print("\n\n입력이 중단되었습니다.")
     print("프로그램을 종료합니다.")
