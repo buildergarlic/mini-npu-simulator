@@ -91,6 +91,14 @@ class Grid:
     def shape_text(self):
         return f"{self.size}×{self.size}"
 
+    def flatten(self):
+        """(보너스 1) 2차원 배열을 길이 N²인 1차원 리스트로 펼친다. (행 우선: index = row × N + col)"""
+        flat = []
+        for row in self.cells:
+            for value in row:
+                flat.append(value)
+        return flat
+
     def show(self, indent="  "):
         """배열을 한 줄에 한 행씩 출력한다."""
         for row in self.cells:
@@ -179,6 +187,20 @@ def mac_2d(pattern, filt):
     return total
 
 
+def mac_flat(pattern_flat, filter_flat):
+    """(보너스 1) 1차원(길이 N²) 리스트로 MAC 연산을 한다.
+
+    2차원 접근 a[i][j]는 '행 찾기 → 열 찾기' 두 번의 인덱싱과 이중 반복문이 필요하지만,
+    1차원 접근 a[k]는 인덱싱 한 번, 반복문 하나로 끝난다. 더하는 순서(행 우선)는 mac_2d와 같다.
+    """
+    if len(pattern_flat) != len(filter_flat):
+        raise ValueError(f"크기 불일치: 패턴 {len(pattern_flat)}칸, 필터 {len(filter_flat)}칸")
+    total = 0.0
+    for k in range(len(pattern_flat)):
+        total += pattern_flat[k] * filter_flat[k]
+    return total
+
+
 def judge(score_a, score_b, label_a, label_b, epsilon=EPSILON):
     """두 점수를 허용오차(epsilon) 기반으로 비교한다.
 
@@ -230,10 +252,15 @@ def benchmark(cases, repeat=REPEAT):
     """cases: [(크기, 패턴 Grid, 필터 Grid, 데이터 출처)] → 크기별 측정 결과 목록."""
     results = []
     for size, pattern, filt, source in cases:
+        # 1차원 변환은 측정 구간 밖에서 한 번만 한다. (같은 입력, 같은 반복 횟수로 비교)
+        pattern_flat = pattern.flatten()
+        filter_flat = filt.flatten()
         results.append({
             "size": size,
             "ops": size * size,
             "ms_2d": measure_ms(mac_2d, pattern, filt, repeat=repeat),
+            "ms_1d": measure_ms(mac_flat, pattern_flat, filter_flat, repeat=repeat),
+            "same": mac_2d(pattern, filt) == mac_flat(pattern_flat, filter_flat),
             "source": source,
         })
     return results
@@ -257,6 +284,23 @@ def print_benchmark(results, repeat=REPEAT):
         ["left", "right", "right", "right", "left"],
     )
     print(f"※ 크기별 MAC 연산(필터 1개 × 패턴 1개)을 {repeat}회 반복한 평균입니다.")
+
+    print("\n[보너스] 2차원 → 1차원 배열 최적화 비교 (같은 입력, 같은 반복 횟수)")
+    rows = []
+    for item in results:
+        speedup = item["ms_2d"] / item["ms_1d"] if item["ms_1d"] > 0 else float("inf")
+        rows.append([
+            f"{item['size']}×{item['size']}",
+            f"{item['ms_2d']:.4f}",
+            f"{item['ms_1d']:.4f}",
+            f"{speedup:.2f}x",
+            "✓" if item["same"] else "✗",
+        ])
+    print_table(
+        ["크기", "2D 평균(ms)", "1D 평균(ms)", "속도 향상", "점수 일치"],
+        rows,
+        ["left", "right", "right", "right", "right"],
+    )
 
 
 # =============================================================
