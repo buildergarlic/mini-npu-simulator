@@ -1,0 +1,70 @@
+# Docker 재현성 검사
+# push와 Pull Request마다 GitHub 서버에서 Docker 이미지를 새로 빌드하고 실행해 본다.
+# 배지가 초록색이면 "누구의 PC에서든 Docker로 그대로 재현된다"는 뜻이다.
+name: Docker 재현성 검사
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: # Actions 탭에서 수동 실행
+
+jobs:
+  run-in-docker:
+    name: 빌드 · 테스트 · 결과 재현 확인 (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 이미지 빌드
+        run: docker build -t mini-npu-simulator .
+
+      - name: 단위 테스트 19개 (컨테이너 안)
+        run: docker run --rm --entrypoint python mini-npu-simulator -m unittest -v
+
+      - name: 모드 2 data.json 분석 — 6개 중 통과 3 / 실패 3 재현
+        run: |
+          printf '2\n0\n' | docker run --rm -i mini-npu-simulator | tee out1.txt
+          grep -q "총 테스트: 6개" out1.txt
+          grep -q "통과: 3개" out1.txt
+          grep -q "실패: 3개" out1.txt
+
+      - name: 의도적 오류 데이터 — 중단 없이 케이스별 FAIL 처리
+        run: |
+          printf '2\n0\n' | docker run --rm -i mini-npu-simulator samples/data_with_errors.json | tee out2.txt
+          grep -q "총 테스트: 11개" out2.txt
+          grep -q "실패: 9개" out2.txt
+
+      - name: 모드 1 미션 예시 (A 1.0 / B 5.0 → B)
+        run: |
+          printf '1\n0 1 0\n1 1 1\n0 1 0\n1 0 1\n0 1 0\n1 0 1\n1 0 1\n0 1 0\n1 0 1\n0\n' \
+            | docker run --rm -i mini-npu-simulator | tee out3.txt
+          grep -q "판정: B" out3.txt
+
+      - name: 최소 지원 버전(Python 3.8)으로 빌드·테스트
+        run: |
+          docker build --build-arg PYTHON_VERSION=3.8 -t mini-npu-simulator:py3.8 .
+          docker run --rm --entrypoint python mini-npu-simulator:py3.8 -m unittest
+
+      - name: Docker Compose로 실행
+        run: |
+          docker compose build
+          printf '2\n0\n' | docker compose run --rm -T npu | tee out4.txt
+          grep -q "통과: 3개" out4.txt
+
+  arm64:
+    name: ARM(Apple Silicon 등) 빌드·테스트 (linux/arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: arm64 이미지 빌드
+        run: docker buildx build --platform linux/arm64 --load -t mini-npu-simulator:arm64 .
+
+      - name: arm64 컨테이너에서 단위 테스트와 data.json 분석
+        run: |
+          docker run --rm --platform linux/arm64 --entrypoint python mini-npu-simulator:arm64 -m unittest
+          printf '2\n0\n' | docker run --rm -i --platform linux/arm64 mini-npu-simulator:arm64 | tee out.txt
+          grep -q "통과: 3개" out.txt
