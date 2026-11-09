@@ -1,0 +1,12 @@
+# Docker 이미지에 넣지 않을 파일 (빌드를 빠르게 하고 이미지를 작게 유지한다)
+.git
+.github
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.md
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

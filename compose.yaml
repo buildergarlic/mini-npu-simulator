@@ -1,0 +1,13 @@
+# Docker Compose 설정 — 긴 docker 명령어 옵션을 파일에 적어 두고 짧은 명령으로 실행한다.
+#
+# 빌드:   docker compose build
+# 실행:   docker compose run --rm npu
+# 테스트: docker compose run --rm --entrypoint python npu -m unittest -v
+name: mini-npu-simulator # 프로젝트 이름 고정 (폴더 이름이 달라도 같게 동작)
+
+services:
+  npu:
+    build: .
+    image: mini-npu-simulator
+    stdin_open: true # docker run -i : 키보드 입력을 받는다
+    tty: true # docker run -t : 터미널 화면처럼 동작한다
