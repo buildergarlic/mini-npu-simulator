@@ -28,7 +28,7 @@ python main.py            # macOS/Linux는 python3 main.py
 - **data.json 위치**: `main.py`와 같은 폴더 (어느 폴더에서 실행해도 이 파일을 찾습니다)
 - **다른 JSON으로 모드 2 실행**: `python main.py samples/data_with_errors.json` (의도적 오류 데이터로 예외 처리 확인)
 - **모드 1 입력 팁**: 각 행을 `0 1 0`처럼 공백으로 구분해 3줄 입력합니다. 첫 줄에 `cross` 또는 `x`를 입력하면 해당 3×3 패턴이 자동으로 채워집니다.
-- **테스트 실행**: `python -m unittest -v` (17개)
+- **테스트 실행**: `python -m unittest -v` (19개)
 - `Ctrl+C` / `Ctrl+D`로 언제든 안전하게 종료됩니다.
 
 ## 2. 파일 구조
@@ -84,6 +84,7 @@ data.json은 같은 뜻을 여러 표기로 씁니다. 필터 키는 `cross`/`x`
 
 - 앞뒤 공백과 대소문자는 무시합니다 (`" CROSS "` → `Cross`).
 - 표에 없는 라벨(예: `o`)은 **추측하지 않고** 해당 케이스를 FAIL로 처리합니다.
+- 라벨 표기는 `main.py`의 `LABEL_ALIASES` 표 한 곳에서만 관리합니다. 새 라벨을 추가하는 단계별 방법은 [8. 새 라벨 추가 절차](#8-새-라벨-추가-절차)에 있습니다.
 
 ### 3-3. 점수 비교 정책 (epsilon)
 
@@ -308,4 +309,100 @@ X 점수: 0.1
 python -m unittest -v
 ```
 
-단위 테스트 17개를 둡니다. 데이터 구조, MAC 예시, 1D/2D 일치, epsilon 동점, 라벨 정규화, 입력 파싱, 패턴 생성기, data.json 결과(3 PASS/3 FAIL), 오류 샘플의 케이스별 FAIL 분류를 확인하며, Python 3.8과 3.13에서 모두 통과합니다.
+단위 테스트 19개를 둡니다. 데이터 구조, MAC 예시, 1D/2D 일치, epsilon 동점, 라벨 정규화와 라벨 표 규칙, 입력 파싱, 패턴 생성기, data.json 결과(3 PASS/3 FAIL), 오류 샘플의 케이스별 FAIL 분류를 확인하며, Python 3.8과 3.13에서 모두 통과합니다.
+
+## 8. 새 라벨 추가 절차
+
+라벨을 추가하는 경우는 두 가지입니다.
+
+| 경우 | 예 | 바꿀 곳 |
+|---|---|---|
+| **A. 기존 모양의 새 표기** (가장 흔함) | 데이터가 Cross를 `plus`로, X를 `×`로 적음 | `LABEL_ALIASES` 한 줄 + 테스트 + README |
+| **B. 새 모양(새 표준 라벨)** | `T` 모양을 세 번째로 판별 | 상수, 데이터, 판정 로직, 테스트 (8-2 참고) |
+
+### 8-1. 기존 모양의 새 표기 추가 (예: `plus` → Cross, `×` → X)
+
+**1단계 — 코드: `main.py`의 `LABEL_ALIASES`에 한 줄씩 추가합니다.**
+
+```python
+LABEL_ALIASES = {
+    "+": CROSS,
+    "cross": CROSS,
+    "x": X,
+    "plus": CROSS,  # 새 표기
+    "×": X,         # 새 표기 (곱셈 기호)
+}
+```
+
+- 키는 **소문자, 앞뒤 공백 없이** 적습니다. `normalize_label()`은 입력을 `strip().lower()`로 바꾼 뒤 이 표에서 찾기 때문입니다. `"Plus"`처럼 대문자로 적으면 어떤 입력도 이 키와 같아지지 않습니다.
+- 값은 표준 라벨 상수(`CROSS`, `X`) 중 하나만 씁니다.
+
+**2단계 — 다른 코드는 고치지 않습니다.** 아래 기능이 모두 같은 표를 읽으므로 새 표기가 자동으로 반영됩니다.
+
+- `normalize_label()`: data.json의 expected 값과 filter 키 정규화
+- 알 수 없는 라벨 오류 메시지의 허용 목록 (`허용: '+', 'cross', 'x', 'plus', '×'`)
+- 모드 1의 자동 생성 입력 (첫 줄에 `plus`를 입력하면 3×3 Cross 생성)
+
+**3단계 — 테스트: `test_main.py`의 `LabelTest.test_normalize`에 새 표기를 추가합니다.**
+
+```python
+cases = {"+": "Cross", "x": "X", "cross": "Cross", "X": "X", " Cross ": "Cross",
+         "plus": "Cross", " PLUS ": "Cross", "×": "X"}  # 새 표기와 대소문자·공백 변형
+```
+
+- 새 표기가 `test_unknown_label`의 목록(`"o"`, `"circle"` 등)에 있으면 그 목록에서 뺍니다.
+
+**4단계 — (선택) 실제 데이터로 확인합니다.** 새 표기를 쓰는 JSON을 만들고 모드 2로 실행합니다.
+
+```json
+{
+  "filters": {"size_5": {"plus": [[...5×5...]], "×": [[...5×5...]]}},
+  "patterns": {"size_5_1": {"input": [[...5×5...]], "expected": "plus"}}
+}
+```
+
+```bash
+python main.py new_label.json      # 메뉴에서 2 선택 → "✓ size_5 필터 로드 완료 (Cross, X)", PASS 확인
+```
+
+**5단계 — 테스트를 실행합니다.**
+
+```bash
+python -m unittest -v
+```
+
+아래 두 테스트가 라벨 표의 규칙을 자동으로 검사하므로, 추가를 잘못하면 여기서 실패합니다.
+
+| 테스트 | 검사 내용 | 실패 예 |
+|---|---|---|
+| `test_alias_table_rules` | 키가 소문자·공백 없음, 값이 표준 라벨, 모든 표준 라벨에 표기가 1개 이상 | `"Plus": CROSS`, `"o": "Circle"` |
+| `test_error_message_lists_all_aliases` | 오류 메시지에 모든 표기가 나옴 | 허용 목록을 코드에 직접 적은 경우 |
+
+**6단계 — 문서와 커밋:** README [3-2 라벨 표](#3-2-라벨-정규화-표준-라벨-cross-x)에 새 표기 행을 추가하고 커밋합니다.
+
+```bash
+git add main.py test_main.py README.md
+git commit -m "Feat: 라벨 표기 'plus', '×' 추가"
+```
+
+> 이 절차는 실제로 적용해 확인했습니다. 위 1~5단계를 그대로 따랐을 때 테스트가 모두 통과했고, 새 표기를 쓰는 JSON은 모드 2에서 2 PASS / 0 FAIL, 모드 1에서는 `plus`와 `×` 입력으로 자동 생성이 동작했습니다.
+
+**주의할 점**
+
+- 한 표기를 두 라벨에 연결할 수 없습니다. 파이썬 dict는 키가 하나뿐이라, `"x"`를 아래 줄에 다시 적으면 앞의 연결을 덮어씁니다.
+- 한 필터 묶음 안에 같은 라벨의 표기를 두 개 쓰면(예: `"cross"`와 `"plus"`를 함께 씀) `Cross 필터가 중복되었습니다` 오류가 나고, 그 크기의 필터는 쓰지 않습니다.
+
+### 8-2. 새 모양(새 표준 라벨) 추가 (예: `T`)
+
+미션 요구 사항이 Cross·X 두 라벨의 비교이므로, 현재 판정 로직은 라벨이 두 개라고 가정합니다. 세 번째 모양을 추가하려면 아래 위치를 함께 바꿔야 합니다.
+
+| 순서 | 파일 · 위치 | 바꿀 내용 |
+|:-:|---|---|
+| 1 | `main.py` 상수 | `T = "T"`를 추가하고 `STANDARD_LABELS = (CROSS, X, T)`로 바꿉니다. |
+| 2 | `main.py` `LABEL_ALIASES` | `"t": T`처럼 새 라벨의 표기를 추가합니다. (8-1 규칙 동일) |
+| 3 | `data.json`, `samples/*.json` | **모든** `size_N` 필터 묶음에 `"t"` 필터를 추가합니다. `parse_filter_group()`은 `STANDARD_LABELS`의 필터가 모두 있어야 로드하므로, 하나라도 빠지면 그 크기의 필터 로드가 실패합니다. |
+| 4 | `main.py` `analyze_case()`, `judge()` | 지금은 두 점수만 비교합니다. 표준 라벨마다 점수를 계산하고, 가장 큰 점수의 라벨을 고르되 1위와 2위의 차이가 `EPSILON`보다 작으면 `UNDECIDED`로 판정하도록 일반화합니다. 결과의 `"cross"`/`"x"` 키는 라벨별 점수 딕셔너리로 바꿉니다. |
+| 5 | `main.py` `print_case()`, `print_tie_diagnosis()` | 라벨별 점수를 반복문으로 출력하도록 바꿉니다. |
+| 6 | `main.py` 생성기 (선택) | `generate_t(size)`를 만들고 `GENERATORS`에 등록하면 모드 1 자동 입력과 모드 3에서 쓸 수 있습니다. 모드 3(`run_generator_mode()`)의 패턴 목록에도 추가합니다. |
+| 7 | `test_main.py` | `t` 정규화, T 패턴 판정, 세 라벨 동점 시 UNDECIDED, data.json 결과 기대값을 테스트에 추가·갱신합니다. |
+| 8 | `README.md` | 3-2 라벨 표와 6장 결과 리포트를 갱신합니다. |

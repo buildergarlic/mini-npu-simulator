@@ -32,6 +32,9 @@ STANDARD_LABELS = (CROSS, X)
 # 라벨 정규화 표: (소문자로 바꾼) 원본 표기 → 표준 라벨
 #   expected 값: '+' → Cross, 'x' → X
 #   filter 키  : 'cross' → Cross, 'x' → X
+# 라벨 표기는 이 표 한 곳에서만 관리한다. normalize_label(), 오류 메시지의 허용 목록,
+# 모드 1의 자동 생성 입력이 모두 이 표를 읽는다.
+# 새 표기 추가 시: 키는 소문자, 앞뒤 공백 없이 적는다. (README '8. 새 라벨 추가 절차' 참고)
 LABEL_ALIASES = {
     "+": CROSS,
     "cross": CROSS,
@@ -219,7 +222,8 @@ def normalize_label(raw):
     key = raw.strip().lower()
     if key in LABEL_ALIASES:
         return LABEL_ALIASES[key]
-    raise ValueError(f"알 수 없는 라벨 {raw!r} (허용: '+', 'x', 'cross')")
+    allowed = ", ".join(repr(alias) for alias in LABEL_ALIASES)
+    raise ValueError(f"알 수 없는 라벨 {raw!r} (허용: {allowed})")
 
 
 def fmt_sci(value):
@@ -371,7 +375,7 @@ def read_matrix(title, size=3):
     rows = []
     while len(rows) < size:
         line = input().strip()
-        if not rows and line.lower() in ("cross", "x", "+"):
+        if not rows and line.lower() in LABEL_ALIASES:
             label = normalize_label(line)
             grid = GENERATORS[label](size)
             print(f"→ 패턴 생성기로 {size}×{size} {label} 생성:")

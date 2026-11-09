@@ -89,9 +89,26 @@ class LabelTest(unittest.TestCase):
             self.assertEqual(main.normalize_label(raw), expected)
 
     def test_unknown_label(self):
-        for raw in ("o", "", "plus", 1, None):
+        for raw in ("o", "", "circle", 1, None):
             with self.assertRaises(ValueError):
                 main.normalize_label(raw)
+
+    def test_alias_table_rules(self):
+        """새 라벨을 추가할 때 지켜야 할 규칙 (README '8. 새 라벨 추가 절차')."""
+        for alias, label in main.LABEL_ALIASES.items():
+            # normalize_label()은 입력을 strip().lower()한 뒤 찾으므로 키도 그 형태여야 한다.
+            self.assertEqual(alias, alias.strip().lower(), f"키 {alias!r}는 소문자·공백 없이 적어야 합니다.")
+            self.assertTrue(alias, "빈 문자열은 라벨 표기로 쓸 수 없습니다.")
+            self.assertIn(label, main.STANDARD_LABELS, f"{alias!r}가 표준 라벨이 아닌 {label!r}로 연결됩니다.")
+            self.assertEqual(main.normalize_label(alias.upper()), label)
+        for label in main.STANDARD_LABELS:
+            self.assertIn(label, main.LABEL_ALIASES.values(), f"{label}로 연결되는 표기가 없습니다.")
+
+    def test_error_message_lists_all_aliases(self):
+        with self.assertRaises(ValueError) as context:
+            main.normalize_label("o")
+        for alias in main.LABEL_ALIASES:
+            self.assertIn(repr(alias), str(context.exception))
 
 
 class InputTest(unittest.TestCase):
