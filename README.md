@@ -1,14 +1,33 @@
 # 🧮 Mini NPU Simulator
 
+[![Docker 재현성 검사](https://github.com/buildergarlic/mini-npu-simulator/actions/workflows/docker.yml/badge.svg)](https://github.com/buildergarlic/mini-npu-simulator/actions/workflows/docker.yml)
+
 AI 칩(NPU)이 이미지를 판별할 때 쓰는 **MAC(Multiply-Accumulate) 연산**을 Python으로 직접 구현한 콘솔 프로그램입니다.
 숫자 배열로 된 패턴이 **십자가(Cross)** 인지 **X** 인지 판별하고, 패턴 크기(3×3 ~ 25×25 이상)에 따라 연산 시간이 어떻게 늘어나는지 측정합니다.
 
 - 외부 라이브러리 없음 (NumPy 등 미사용, `json`·`time`·`re`·`math`·`unicodedata`·`pathlib` 표준 라이브러리만 사용)
 - Python 3.8 이상 (3.8.20, 3.13에서 동작·테스트 확인)
+- Docker로 Windows·macOS·Linux 어디서나 같은 환경(Python 3.12.16 고정)에서 실행 가능, push마다 자동 검사 ([9. Docker 실행 가이드](#9-docker-실행-가이드--어떤-개발-환경에서도-똑같이-재현하기))
 
 ---
 
 ## 1. 실행 방법
+
+두 가지 방법이 있습니다. **PC 환경과 상관없이 똑같이 실행하려면 방법 1(Docker)을 권장합니다.**
+
+### 방법 1. Docker로 실행 (Python 설치 불필요, Windows·macOS·Linux 동일)
+
+```bash
+git clone https://github.com/buildergarlic/mini-npu-simulator.git
+cd mini-npu-simulator
+docker compose build
+docker compose run --rm npu
+```
+
+- Docker Desktop(또는 Docker Engine)만 설치되어 있으면 됩니다.
+- 테스트 실행, 다른 JSON 분석, OS별 명령어, 문제 해결은 [9. Docker 실행 가이드](#9-docker-실행-가이드--어떤-개발-환경에서도-똑같이-재현하기)에 모두 있습니다.
+
+### 방법 2. Python으로 직접 실행
 
 ```bash
 git clone https://github.com/buildergarlic/mini-npu-simulator.git
@@ -40,6 +59,11 @@ mini-npu-simulator/
 ├── samples/
 │   └── data_with_errors.json     # 의도적 오류 케이스 모음 (예외 처리 검증용)
 ├── test_main.py                  # 단위 테스트 (unittest)
+├── Dockerfile                    # Docker 이미지 설계도 (Python 3.12.16 + 코드 + 데이터)
+├── compose.yaml                  # Docker Compose 설정 (입력 연결)
+├── .dockerignore                 # 이미지에 넣지 않을 파일 목록
+├── .github/workflows/
+│   └── docker.yml                # push·PR마다 Docker 빌드·테스트를 자동 검사 (GitHub Actions)
 └── README.md
 ```
 
@@ -406,3 +430,166 @@ git commit -m "Feat: 라벨 표기 'plus', '×' 추가"
 | 6 | `main.py` 생성기 (선택) | `generate_t(size)`를 만들고 `GENERATORS`에 등록하면 모드 1 자동 입력과 모드 3에서 쓸 수 있습니다. 모드 3(`run_generator_mode()`)의 패턴 목록에도 추가합니다. |
 | 7 | `test_main.py` | `t` 정규화, T 패턴 판정, 세 라벨 동점 시 UNDECIDED, data.json 결과 기대값을 테스트에 추가·갱신합니다. |
 | 8 | `README.md` | 3-2 라벨 표와 6장 결과 리포트를 갱신합니다. |
+
+## 9. Docker 실행 가이드 — 어떤 개발 환경에서도 똑같이 재현하기
+
+### 9-1. 왜 Docker를 쓰나요?
+
+- 이 프로그램을 그냥 실행하려면 PC에 Python 3.8 이상이 있어야 합니다. 그런데 PC마다 OS, Python 버전, 문자 인코딩이 달라서 "내 PC에서는 되는데 다른 PC에서는 안 되는" 일이 생깁니다.
+- Docker는 **Linux + Python 3.12.16 + 코드 + data.json**을 하나의 이미지로 묶습니다. 누가 어떤 OS에서 실행해도 컨테이너 안은 똑같은 환경이고, MAC 점수와 PASS/FAIL 결과도 똑같이 나옵니다.
+- PC에 Python을 설치하지 않아도 됩니다. Docker만 있으면 됩니다.
+
+| 용어 | 뜻 |
+|---|---|
+| 이미지 | 실행 환경, 코드, 데이터를 묶은 '설치본'. `Dockerfile`로 만듭니다. |
+| 컨테이너 | 이미지를 실행한 것. 한 번 실행 = 컨테이너 하나. 끝나면 지워도 됩니다. |
+
+> 이 프로그램은 파일을 저장하지 않으므로 볼륨이 필요 없습니다. (내 JSON 파일을 분석할 때만 폴더를 연결합니다 → 9-4)
+
+### 9-2. 준비물
+
+| OS | 설치할 것 |
+|---|---|
+| Windows 10/11 | Docker Desktop (설치 중 WSL 2 사용 선택) |
+| macOS (Intel / Apple Silicon) | Docker Desktop |
+| Linux | Docker Engine + Docker Compose 플러그인 |
+
+- 설치 안내: https://docs.docker.com/get-started/get-docker/ (Linux: https://docs.docker.com/engine/install/)
+- Windows·macOS는 **Docker Desktop을 실행해 둔 상태**에서 명령어를 입력합니다.
+- 설치 확인:
+
+```bash
+docker --version
+docker compose version
+```
+
+### 9-3. 실행하기
+
+#### 방법 A. Docker Compose (권장)
+
+```bash
+git clone https://github.com/buildergarlic/mini-npu-simulator.git
+cd mini-npu-simulator
+docker compose build          # 이미지 만들기 (처음 한 번, 코드가 바뀔 때마다)
+docker compose run --rm npu   # 프로그램 실행 → 모드 선택
+```
+
+| 하고 싶은 일 | 명령 |
+|---|---|
+| 프로그램 실행 (모드 1·2·3) | `docker compose run --rm npu` |
+| 의도적 오류 데이터로 모드 2 | `docker compose run --rm npu samples/data_with_errors.json` |
+| 단위 테스트 19개 실행 | `docker compose run --rm --entrypoint python npu -m unittest -v` |
+| 컨테이너 안 Python 버전 확인 | `docker compose run --rm --entrypoint python npu --version` |
+
+- `run --rm`: 끝나면 컨테이너를 지웁니다.
+- `docker compose up`은 쓰지 않습니다. `up`은 서버를 백그라운드로 띄우는 용도라 키보드 입력을 주고받기 어렵습니다.
+
+#### 방법 B. docker 명령어만 사용
+
+```bash
+docker build -t mini-npu-simulator .
+docker run --rm -it mini-npu-simulator
+```
+
+| 하고 싶은 일 | 명령 |
+|---|---|
+| 프로그램 실행 | `docker run --rm -it mini-npu-simulator` |
+| 의도적 오류 데이터로 모드 2 | `docker run --rm -it mini-npu-simulator samples/data_with_errors.json` |
+| 단위 테스트 실행 | `docker run --rm --entrypoint python mini-npu-simulator -m unittest -v` |
+
+| 옵션 | 뜻 |
+|---|---|
+| `-t mini-npu-simulator` (build) | 만든 이미지에 이름을 붙입니다. |
+| `--rm` | 끝나면 컨테이너를 지웁니다. |
+| `-it` | `-i` 키보드 입력 + `-t` 터미널 화면. 빠지면 입력할 수 없습니다. |
+| 이미지 이름 뒤의 인자 | `main.py`에 그대로 전달됩니다. (Dockerfile의 `ENTRYPOINT ["python", "main.py"]`) |
+| `--entrypoint python` | `main.py` 대신 `python`을 실행합니다. 뒤의 `-m unittest -v`가 python에 전달됩니다. |
+
+**종료:** 메뉴 `0`, `Ctrl+C`, 다른 터미널에서 `docker stop` 모두 정상 종료합니다.
+
+### 9-4. 내 JSON 파일을 분석하기
+
+컨테이너는 내 PC의 파일을 바로 볼 수 없습니다. 파일이 있는 폴더를 컨테이너의 `/work`에 **읽기 전용(`:ro`)** 으로 연결하고, 그 경로를 인자로 넘깁니다.
+
+예: 프로젝트 폴더 안 `my-data/my.json`을 분석
+
+| 환경 | 명령 |
+|---|---|
+| macOS | `docker compose run --rm -v "$(pwd)/my-data:/work:ro" npu /work/my.json` |
+| Linux | `docker compose run --rm --user "$(id -u):$(id -g)" -v "$(pwd)/my-data:/work:ro" npu /work/my.json` |
+| Windows PowerShell | `docker compose run --rm -v "${PWD}/my-data:/work:ro" npu /work/my.json` |
+| Windows 명령 프롬프트(cmd) | `docker compose run --rm -v "%cd%\my-data:/work:ro" npu /work/my.json` |
+
+- 실행 후 모드 `2`를 고르면 `파일: /work/my.json`으로 분석합니다.
+- Linux에서 `--user`를 붙이는 이유: 컨테이너 안 사용자(uid 1000)가 내 파일을 읽을 권한이 없으면 `✗ 파일을 읽을 수 없습니다: Permission denied`가 나옵니다. `--user`로 내 계정과 같은 사용자로 실행하면 해결됩니다. (Docker Desktop은 권한을 자동으로 맞춰 줍니다.)
+- 라벨 표기(`+`, `x`, `cross`)와 키 규칙(`size_N`, `size_N_idx`)은 data.json과 같아야 합니다. 새 표기를 쓰려면 [8. 새 라벨 추가 절차](#8-새-라벨-추가-절차)를 따른 뒤 `docker compose build`로 이미지를 다시 만듭니다.
+
+### 9-5. 운영체제별 차이
+
+| 환경 | 실행 명령 | 현재 폴더 표기 | 참고 |
+|---|---|---|---|
+| macOS / Linux 터미널 | `docker compose run --rm npu` | `$(pwd)` | |
+| Windows PowerShell / Windows Terminal (권장) | `docker compose run --rm npu` | `${PWD}` | |
+| Windows 명령 프롬프트(cmd) | `docker compose run --rm npu` | `%cd%` | 한글·`×`·`✓`가 깨지면 `chcp 65001` 실행 후 다시 시작 |
+| Windows Git Bash | `winpty docker compose run --rm npu` | `$(pwd)` | 입력이 안 되면 `winpty`를 앞에 붙입니다. 권장하지 않습니다. |
+
+- Apple Silicon(M1~M4) Mac에서도 그대로 동작합니다. 공식 Python 이미지가 arm64를 지원하고, GitHub Actions에서 arm64 테스트를 매번 실행합니다.
+- 성능 분석의 시간(ms)은 PC 성능에 따라 다르지만, **크기가 커질수록 N²에 비례해 늘어나는 경향**은 어떤 환경에서도 같습니다. 컨테이너 안에서 잰 25×25 평균은 약 0.02 ms로, 6-3의 표(컨테이너 밖에서 잼)와 비슷한 수준이었습니다.
+
+### 9-6. 재현 확인 체크리스트
+
+아래 결과가 그대로 나오면 이 프로젝트가 여러분의 PC에서 똑같이 재현된 것입니다.
+
+| 순서 | 명령 / 동작 | 기대 결과 |
+|:-:|---|---|
+| 1 | `docker compose build` | `Image mini-npu-simulator Built` |
+| 2 | `docker compose run --rm --entrypoint python npu --version` | `Python 3.12.16` |
+| 3 | `docker compose run --rm --entrypoint python npu -m unittest -v` | `Ran 19 tests ... OK` |
+| 4 | `docker compose run --rm npu` → `1` → 필터 A `0 1 0`/`1 1 1`/`0 1 0`, 필터 B `1 0 1`/`0 1 0`/`1 0 1`, 패턴 `1 0 1`/`0 1 0`/`1 0 1` | `A 점수: 1.0`, `B 점수: 5.0`, `판정: B` |
+| 5 | `docker compose run --rm npu` → `2` | `총 테스트: 6개`, `통과: 3개`, `실패: 3개` (실패 3건은 모두 `수치 비교` 동점 — 6장 참고) |
+| 6 | `docker compose run --rm npu samples/data_with_errors.json` → `2` | `총 테스트: 11개`, `통과: 2개`, `실패: 9개` |
+| 7 | 입력 없이 자동 확인: `printf '2\n0\n' \| docker compose run --rm -T npu` (PowerShell: `"2","0" \| docker compose run --rm -T npu`) | 5번과 같은 결과 |
+
+### 9-7. 다른 Python 버전으로 실행해 보기
+
+과제 기준 최소 버전(Python 3.8)에서도 똑같이 동작하는지 확인할 수 있습니다.
+
+```bash
+docker build --build-arg PYTHON_VERSION=3.8 -t mini-npu-simulator:py3.8 .
+docker run --rm --entrypoint python mini-npu-simulator:py3.8 -m unittest -v
+docker run --rm -it mini-npu-simulator:py3.8
+```
+
+### 9-8. 함께 작업하기
+
+| 상황 | 할 일 |
+|---|---|
+| 처음 프로젝트에 참여 | `git clone` → `docker compose build` → `docker compose run --rm npu` |
+| 다른 사람이 코드를 바꿔 push함 | `git pull` → `docker compose build` → 실행 (이미지는 빌드할 때의 코드를 담고 있어서, 코드가 바뀌면 **다시 빌드**해야 합니다) |
+| 코드를 고치면서 바로 확인 | `docker compose run --rm -v "$(pwd):/app" npu` — 내 폴더의 코드를 컨테이너에 연결해 다시 빌드하지 않고 실행합니다. (Linux는 `--user "$(id -u):$(id -g)"` 추가) |
+| 코드를 고친 뒤 테스트 | `docker compose run --rm -v "$(pwd):/app" --entrypoint python npu -m unittest -v` |
+| 변경 사항을 올림 (push / Pull Request) | GitHub Actions가 자동으로 Docker 이미지를 빌드하고 테스트합니다. 위 배지와 PR의 체크 표시가 초록색이면 재현성이 유지된 것입니다. |
+
+- 자동 검사(`.github/workflows/docker.yml`) 내용: 이미지 빌드, 단위 테스트 19개, data.json 결과(6개 중 3 PASS/3 FAIL), 오류 샘플(11개 중 9 FAIL), 모드 1 미션 예시, Python 3.8 빌드·테스트, Docker Compose 실행, arm64 빌드·테스트
+
+### 9-9. 문제 해결
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| `Cannot connect to the Docker daemon` / `error during connect` | Docker가 실행 중이 아님 | Docker Desktop을 실행하고 다시 시도 |
+| `the input device is not a TTY` | `-it` 없이 실행했거나 Git Bash 사용 | `-it`를 붙이거나, PowerShell을 쓰거나, 명령 앞에 `winpty` |
+| 메뉴는 나오는데 입력이 안 됨 | `-i` 옵션이 빠짐 | `docker run --rm -it ...` |
+| 한글·`×`·`✓`가 깨짐 (Windows) | 콘솔 문자 코드가 UTF-8이 아님 | Windows Terminal 사용, 또는 `chcp 65001` 실행 후 다시 시작 |
+| 표의 열이 조금 어긋남 | 터미널 글꼴마다 한글·기호 폭이 다름 | 결과에는 영향 없음. D2Coding 등 한글 고정폭 글꼴 권장 |
+| `✗ 파일을 찾을 수 없습니다: ...` | 경로를 컨테이너 기준으로 쓰지 않음 | 연결한 경로(`/work/my.json`)로 지정 (9-4) |
+| `✗ 파일을 읽을 수 없습니다: Permission denied` | Linux에서 파일 권한이 맞지 않음 | `--user "$(id -u):$(id -g)"` 추가 |
+| 코드를 고쳤는데 반영되지 않음 | 이미지를 다시 빌드하지 않음 | `docker compose build` |
+
+### 9-10. Docker 관련 파일 설명
+
+| 파일 | 역할 |
+|---|---|
+| `Dockerfile` | 이미지 설계도. `python:3.12.16-slim` 위에 `main.py`, `test_main.py`, `data.json`, `samples/`를 복사하고, UTF-8 입출력, 일반 사용자(`npu`, uid 1000)로 실행, `ENTRYPOINT ["python", "main.py"]`(뒤의 인자를 main.py에 전달)를 설정합니다. 외부 라이브러리가 없어 `pip install` 단계가 없습니다. |
+| `compose.yaml` | `docker compose` 설정. 입력 연결(`stdin_open`, `tty`)을 적어 두어 짧은 명령으로 실행합니다. |
+| `.dockerignore` | `.git`, 문서 등 이미지에 필요 없는 파일을 빼서 빌드를 빠르게 합니다. |
+| `.github/workflows/docker.yml` | push·PR마다 GitHub 서버에서 위 체크리스트를 자동으로 실행합니다. |
