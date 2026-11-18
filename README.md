@@ -7,6 +7,7 @@ AI 칩(NPU)이 이미지를 판별할 때 쓰는 **MAC(Multiply-Accumulate) 연�
 
 - 외부 라이브러리 없음 (NumPy 등 미사용, `json`·`time`·`re`·`math`·`unicodedata`·`pathlib` 표준 라이브러리만 사용)
 - Python 3.8 이상 (3.8.20, 3.13에서 동작·테스트 확인)
+- **모드 4: FAIL 케이스 무작위 생성 + 결과 대조** — 실패해야 하는 상황 9종을 무작위로 만들어 판정하고, 기대한 실패 원인과 실제 결과를 자동으로 맞춰 봅니다 ([5장 모드 4](#모드-4--fail-케이스-무작위-생성--결과-대조))
 - Docker로 Windows·macOS·Linux 어디서나 같은 환경(Python 3.12.16 고정)에서 실행 가능, push마다 자동 검사 ([9. Docker 실행 가이드](#9-docker-실행-가이드--어떤-개발-환경에서도-똑같이-재현하기))
 
 
@@ -293,6 +294,21 @@ B 점수: 5.0
 
 이 세 질문에 자신의 말로 답한 뒤, 모드 1에서 패턴을 바꿔 결과를 예측해 보세요. 그다음 아래 기존 실행 안내와 상세 구현 설명을 읽으면 각 기능을 코드와 연결할 수 있습니다.
 
+### 0-11. 일부러 틀리게 만든 문제로 채점기 시험하기 (모드 4)
+
+![모드 4: 일부러 틀리게 만든 문제지를 채점기에 넣고, 미리 적어 둔 정답지와 맞춰 보는 흐름](docs/images/mode4-flow.png)
+
+선생님이 채점기를 시험하는 장면을 떠올려 보세요. 선생님은 **일부러 틀린 답안지**를 여러 장 만들고, 답안지마다 "이건 0점이 나와야 해", "이건 이유가 '이름을 안 씀'이어야 해"처럼 **예상 결과를 미리 적어 둡니다**. 그다음 채점기에 넣어 예상과 실제가 같은지 봅니다.
+
+모드 4가 바로 이 일을 합니다.
+
+1. **틀리는 문제 만들기** — 동점이 되게 만든 필터, 정답 라벨을 뒤바꾼 문제, 크기가 안 맞는 그림, 숫자가 아닌 값 등 9가지 상황 중에서 무작위로 골라 문제를 만듭니다. 비교용으로 정상 문제(PASS가 나와야 하는 문제)도 섞습니다.
+2. **예상 결과 적어 두기** — 문제를 만들 때 "FAIL·수치 비교가 나와야 한다"처럼 기대 결과를 함께 적습니다.
+3. **채점하기** — 모드 2와 **똑같은 채점 코드**(`analyze_case`)로 판정합니다.
+4. **맞춰 보기** — 기대 결과와 실제 결과가 같으면 `일치`, 다르면 `불일치`입니다. 모두 `일치`면 채점기가 실패를 **정확한 이유로** 잡아내고 있다는 뜻입니다.
+
+같은 **시드(seed) 번호**를 넣으면 언제나 같은 문제 묶음이 만들어집니다. 다른 사람에게 "시드 42로 돌려 봐"라고 하면 똑같은 결과를 함께 볼 수 있습니다.
+
 ---
 
 ## 1. 실행 방법
@@ -331,7 +347,8 @@ python main.py            # macOS/Linux는 python3 main.py
 - **data.json 위치**: `main.py`와 같은 폴더 (어느 폴더에서 실행해도 이 파일을 찾습니다)
 - **다른 JSON으로 모드 2 실행**: `python main.py samples/data_with_errors.json` (의도적 오류 데이터로 예외 처리 확인)
 - **모드 1 입력 팁**: 각 행을 `0 1 0`처럼 공백으로 구분해 3줄 입력합니다. 첫 줄에 `cross` 또는 `x`를 입력하면 해당 3×3 패턴이 자동으로 채워집니다.
-- **테스트 실행**: `python -m unittest -v` (19개)
+- **테스트 실행**: `python -m unittest -v` (27개)
+- **모드 4 바로 실행**: `python main.py --fail-cases --seed 42 --count 20` (메뉴 없이 실행, 모두 일치하면 종료 코드 0)
 - `Ctrl+C` / `Ctrl+D`로 언제든 안전하게 종료됩니다.
 
 ## 2. 파일 구조
@@ -342,7 +359,8 @@ mini-npu-simulator/
 ├── data.json                     # 미션 제공 데이터 (원본 그대로)
 ├── samples/
 │   └── data_with_errors.json     # 의도적 오류 케이스 모음 (예외 처리 검증용)
-├── test_main.py                  # 단위 테스트 (unittest)
+├── test_main.py                  # 단위 테스트 27개 (unittest)
+├── docs/images/                  # README 설명 그림
 ├── Dockerfile                    # Docker 이미지 설계도 (Python 3.12.16 + 코드 + 데이터)
 ├── compose.yaml                  # Docker Compose 설정 (입력 연결)
 ├── .dockerignore                 # 이미지에 넣지 않을 파일 목록
@@ -359,7 +377,9 @@ mini-npu-simulator/
 | 2. 패턴 생성기 | `generate_cross`, `generate_x` | N×N 십자가/X 자동 생성 |
 | 3. 연산·판정 | `mac_2d`, `mac_flat`, `judge`, `normalize_label` | MAC 연산, epsilon 동점 판정, 라벨 표준화 |
 | 4. 성능 측정 | `measure_ms`, `benchmark` | 연산 함수 호출 구간만 10회 반복 측정 |
-| 6~8. 모드 | `run_user_mode`, `run_json_mode`, `run_generator_mode` | 각 모드 실행 흐름 |
+| 6~8. 모드 | `run_user_mode`, `run_json_mode`, `run_generator_mode` | 모드 1~3 실행 흐름 |
+| 9. 모드 4 | `generate_fail_cases`, `make_fail_case`, `check_fail_cases`, `run_fail_mode` | FAIL 케이스 무작위 생성(유형별 기대 결과 포함) → `analyze_case`로 판정 → 기대·실제 대조 |
+| 10. 메뉴 | `choose_mode`, `main` | 모드 선택, `--fail-cases` 명령줄 실행 |
 
 ## 3. 구현 요약
 
@@ -448,6 +468,7 @@ FAIL에는 원인 분류(**데이터/스키마**, **수치 비교**, **판정 �
 1. 사용자 입력 (3x3)
 2. data.json 분석
 3. 패턴 생성기 + 크기별 성능 분석 (보너스)
+4. FAIL 케이스 무작위 생성 + 결과 대조
 0. 종료
 선택: 1
 
@@ -539,6 +560,89 @@ X 점수: 0.1
 실패 원인 분류: 수치 비교 3건
 ```
 
+### 모드 4 — FAIL 케이스 무작위 생성 + 결과 대조
+
+data.json에는 실패 사례가 3건(모두 동점)뿐입니다. 모드 4는 **실패가 나야 하는 상황을 무작위로 많이 만들어서**, 프로그램이 실패를 놓치지 않고 **정확한 원인**으로 분류하는지 자동으로 확인합니다.
+
+**동작 순서**
+
+1. 시드와 개수를 받아 케이스를 만듭니다. 처음에는 9가지 유형을 한 번씩 넣고, 나머지는 실패 유형 위주로 무작위로 고릅니다. 크기(3·5·7·13·25)와 라벨 표기(`+`, `cross`, `x`)도 무작위입니다.
+2. 케이스마다 **기대 결과**(PASS 또는 FAIL과 실패 원인)를 함께 기록합니다. 기대 결과는 판정 코드를 호출해 얻지 않고, 케이스를 **어떻게 만들었는지**로 정합니다.
+3. 모드 2와 같은 `analyze_case()`로 판정합니다. 케이스마다 필터가 다르므로 필터를 케이스별로 넘깁니다.
+4. 기대 결과와 실제 결과(통과 여부와 실패 원인)를 비교해 `일치`/`불일치`를 표시하고, 유형별로 집계합니다.
+
+**만드는 상황 9가지**
+
+| 유형 | 만드는 방법 | 기대 결과 |
+|---|---|---|
+| 정상 (대조군) | 표준 Cross/X 필터와 같은 모양 패턴 | PASS |
+| 근소한 승리 (차이 > ε) | 반대 필터의 가운데 칸을 정답 점수보다 `1e-6`·`1e-4`·`0.01`만큼 낮게 설정 | PASS (ε보다 크면 판정해야 함) |
+| 가중치 설계 동점 | data.json의 함정과 같은 구조: 정답 필터는 모양 칸마다 `w`, 반대 필터는 가운데 한 칸에 `w×(2N-1)` | FAIL·수치 비교 |
+| ε 미만 근소 차이 | 반대 필터를 `1e-13`~`1e-10`만큼 높게 설정 | FAIL·수치 비교 |
+| expected 라벨 뒤바뀜 | Cross 모양에 `x`(또는 X 모양에 `+`/`cross`) | FAIL·판정 불일치 |
+| 패턴·필터 크기 불일치 | 키는 `size_7_…`인데 패턴은 25×25 등 | FAIL·데이터/스키마 |
+| 알 수 없는 라벨 | expected가 `o`, `plus`, `십자`, 빈 문자열 등 | FAIL·데이터/스키마 |
+| 숫자가 아닌 값 | 칸 하나를 `"1"`, `true`, `null`, `"NaN"`으로 바꿈 | FAIL·데이터/스키마 |
+| 필수 항목 누락 | `input` 또는 `expected` 삭제 | FAIL·데이터/스키마 |
+
+**실행 방법**
+
+| 방법 | 명령 |
+|---|---|
+| 메뉴에서 | `python main.py` → `4` → 개수(Enter = 12) → 시드(Enter = 무작위) |
+| 메뉴 없이 | `python main.py --fail-cases --seed 42 --count 20` |
+| 케이스를 파일로 저장 | `python main.py --fail-cases --seed 42 --count 20 --save cases.json` |
+| Docker | `docker compose run --rm npu --fail-cases --seed 42 --count 20` |
+
+- 같은 시드는 언제나 같은 케이스를 만듭니다. 결과 화면 맨 위에 재현 명령이 출력됩니다.
+- 메뉴 없이 실행하면 모두 일치할 때 종료 코드 0, 하나라도 불일치하면 1, 옵션이 잘못되면 2를 돌려줍니다. 그래서 자동 검사(CI)에 그대로 쓸 수 있습니다.
+- 저장 파일에는 시드, ε, 케이스마다 유형·설명·기대 결과·필터·패턴이 들어 있어 다른 사람이 그대로 확인할 수 있습니다.
+
+**실제 실행 결과** (`python main.py --fail-cases --seed 42`)
+
+![모드 4 실행 화면](docs/images/mode4-run.png)
+
+```
+ #   키           주입한 상황              기대 결과            실제 결과            ε 없이 '>' 비교   대조
+-----------------------------------------------------------------------------------------------------------
+ 1   size_3_0     ε 미만 근소 차이         FAIL·수치 비교       FAIL·수치 비교       X                 일치
+ 2   size_25_1    알 수 없는 라벨          FAIL·데이터/스키마   FAIL·데이터/스키마                     일치
+ 3   size_13_2    숫자가 아닌 값           FAIL·데이터/스키마   FAIL·데이터/스키마                     일치
+ 4   size_5_3     expected 라벨 뒤바뀜     FAIL·판정 불일치     FAIL·판정 불일치                       일치
+ 5   size_5_4     필수 항목 누락           FAIL·데이터/스키마   FAIL·데이터/스키마                     일치
+ 6   size_3_5     가중치 설계 동점         FAIL·수치 비교       FAIL·수치 비교       완전 동점         일치
+ 7   size_7_6     패턴·필터 크기 불일치    FAIL·데이터/스키마   FAIL·데이터/스키마                     일치
+ 8   size_25_7    정상 (대조군)            PASS                 PASS                                   일치
+ 9   size_3_8     근소한 승리 (차이 > ε)   PASS                 PASS                 X                 일치
+10   size_5_9     ε 미만 근소 차이         FAIL·수치 비교       FAIL·수치 비교       X                 일치
+11   size_7_10    필수 항목 누락           FAIL·데이터/스키마   FAIL·데이터/스키마                     일치
+12   size_13_11   가중치 설계 동점         FAIL·수치 비교       FAIL·수치 비교       Cross             일치
+```
+
+```
+생성한 케이스: 12개 (실제 FAIL 10개, PASS 2개)
+기대 결과와 일치: 12/12
+
+유형별 대조:
+- 정상 (대조군) → 기대 PASS: 1/1 일치
+- 근소한 승리 (차이 > ε) → 기대 PASS: 1/1 일치
+- 가중치 설계 동점 → 기대 FAIL·수치 비교: 2/2 일치
+- ε 미만 근소 차이 → 기대 FAIL·수치 비교: 2/2 일치
+- expected 라벨 뒤바뀜 → 기대 FAIL·판정 불일치: 1/1 일치
+- 패턴·필터 크기 불일치 → 기대 FAIL·데이터/스키마: 1/1 일치
+- 알 수 없는 라벨 → 기대 FAIL·데이터/스키마: 1/1 일치
+- 숫자가 아닌 값 → 기대 FAIL·데이터/스키마: 1/1 일치
+- 필수 항목 누락 → 기대 FAIL·데이터/스키마: 2/2 일치
+
+✓ 모든 케이스가 기대한 결과(PASS 또는 정확한 FAIL 원인)로 판정되었습니다.
+```
+
+**결과 읽는 법**
+
+- `ε 없이 '>' 비교` 열은 epsilon 없이 `>`만으로 비교했다면 나왔을 판정입니다. 수학적으로 같은 두 점수인데도 부동소수점 오차 때문에 `Cross`나 `X`가 나오는 줄이 보입니다. 바로 epsilon이 필요한 이유입니다.
+- `불일치`가 하나라도 나오면, 판정 로직이나 검증 규칙이 실패를 놓치거나 다른 원인으로 분류한다는 뜻입니다. 화면 아래에 어느 케이스가 왜 달랐는지 출력됩니다.
+- 이 기능이 실제로 오류를 잡는지도 테스트했습니다. `test_detects_broken_logic`은 판정에서 epsilon을 0으로 바꿔 일부러 망가뜨린 뒤, 모드 4가 `불일치`를 찾아내는지 확인합니다.
+
 ---
 
 ## 6. 결과 리포트
@@ -617,7 +721,17 @@ X 점수: 0.1
 python -m unittest -v
 ```
 
-단위 테스트 19개를 둡니다. 데이터 구조, MAC 예시, 1D/2D 일치, epsilon 동점, 라벨 정규화와 라벨 표 규칙, 입력 파싱, 패턴 생성기, data.json 결과(3 PASS/3 FAIL), 오류 샘플의 케이스별 FAIL 분류를 확인하며, Python 3.8과 3.13에서 모두 통과합니다.
+단위 테스트 27개를 둡니다. 데이터 구조, MAC 예시, 1D/2D 일치, epsilon 동점, 라벨 정규화와 라벨 표 규칙, 입력 파싱, 패턴 생성기, data.json 결과(3 PASS/3 FAIL), 오류 샘플의 케이스별 FAIL 분류를 확인합니다.
+
+모드 4 테스트 8개(`FailCaseModeTest`)는 다음을 확인합니다.
+
+- 시드 30개 × 40케이스가 모두 기대 결과와 일치합니다.
+- 같은 시드는 같은 케이스를 만들고, 개수가 충분하면 9가지 유형이 모두 들어갑니다.
+- 동점 유형은 실제로 |차이| < ε이고, 근소한 승리 유형은 |차이| > ε입니다.
+- epsilon을 망가뜨리면 불일치를 찾아냅니다.
+- 명령줄 실행과 파일 저장이 동작하고, 잘못된 옵션은 거부합니다.
+
+Python 3.8과 3.12.16(Docker), 3.13에서 모두 통과합니다.
 
 ## 8. 새 라벨 추가 절차
 
@@ -760,9 +874,10 @@ docker compose run --rm npu   # 프로그램 실행 → 모드 선택
 
 | 하고 싶은 일 | 명령 |
 |---|---|
-| 프로그램 실행 (모드 1·2·3) | `docker compose run --rm npu` |
+| 프로그램 실행 (모드 1·2·3·4) | `docker compose run --rm npu` |
+| 모드 4 바로 실행 | `docker compose run --rm npu --fail-cases --seed 42 --count 20` |
 | 의도적 오류 데이터로 모드 2 | `docker compose run --rm npu samples/data_with_errors.json` |
-| 단위 테스트 19개 실행 | `docker compose run --rm --entrypoint python npu -m unittest -v` |
+| 단위 테스트 27개 실행 | `docker compose run --rm --entrypoint python npu -m unittest -v` |
 | 컨테이너 안 Python 버전 확인 | `docker compose run --rm --entrypoint python npu --version` |
 
 - `run --rm`: 끝나면 컨테이너를 지웁니다.
@@ -828,11 +943,12 @@ docker run --rm -it mini-npu-simulator
 |:-:|---|---|
 | 1 | `docker compose build` | `Image mini-npu-simulator Built` |
 | 2 | `docker compose run --rm --entrypoint python npu --version` | `Python 3.12.16` |
-| 3 | `docker compose run --rm --entrypoint python npu -m unittest -v` | `Ran 19 tests ... OK` |
+| 3 | `docker compose run --rm --entrypoint python npu -m unittest -v` | `Ran 27 tests ... OK` |
 | 4 | `docker compose run --rm npu` → `1` → 필터 A `0 1 0`/`1 1 1`/`0 1 0`, 필터 B `1 0 1`/`0 1 0`/`1 0 1`, 패턴 `1 0 1`/`0 1 0`/`1 0 1` | `A 점수: 1.0`, `B 점수: 5.0`, `판정: B` |
 | 5 | `docker compose run --rm npu` → `2` | `총 테스트: 6개`, `통과: 3개`, `실패: 3개` (실패 3건은 모두 `수치 비교` 동점 — 6장 참고) |
 | 6 | `docker compose run --rm npu samples/data_with_errors.json` → `2` | `총 테스트: 11개`, `통과: 2개`, `실패: 9개` |
 | 7 | 입력 없이 자동 확인: `printf '2\n0\n' \| docker compose run --rm -T npu` (PowerShell: `"2","0" \| docker compose run --rm -T npu`) | 5번과 같은 결과 |
+| 8 | `docker compose run --rm npu --fail-cases --seed 42` | `기대 결과와 일치: 12/12` |
 
 ### 9-7. 다른 Python 버전으로 실행해 보기
 
@@ -854,7 +970,7 @@ docker run --rm -it mini-npu-simulator:py3.8
 | 코드를 고친 뒤 테스트 | `docker compose run --rm -v "$(pwd):/app" --entrypoint python npu -m unittest -v` |
 | 변경 사항을 올림 (push / Pull Request) | GitHub Actions가 자동으로 Docker 이미지를 빌드하고 테스트합니다. 위 배지와 PR의 체크 표시가 초록색이면 재현성이 유지된 것입니다. |
 
-- 자동 검사(`.github/workflows/docker.yml`) 내용: 이미지 빌드, 단위 테스트 19개, data.json 결과(6개 중 3 PASS/3 FAIL), 오류 샘플(11개 중 9 FAIL), 모드 1 미션 예시, Python 3.8 빌드·테스트, Docker Compose 실행, arm64 빌드·테스트
+- 자동 검사(`.github/workflows/docker.yml`) 내용: 이미지 빌드, 단위 테스트 27개, data.json 결과(6개 중 3 PASS/3 FAIL), 오류 샘플(11개 중 9 FAIL), 모드 4 FAIL 케이스 대조(시드 3개 × 60케이스, 메뉴 실행, 파일 저장), 모드 1 미션 예시, Python 3.8 빌드·테스트, Docker Compose 실행, arm64 빌드·테스트
 
 ### 9-9. 문제 해결
 
