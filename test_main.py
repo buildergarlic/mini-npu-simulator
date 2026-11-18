@@ -169,5 +169,68 @@ class JsonModeTest(unittest.TestCase):
         self.assertIn("찾을 수 없습니다", error)
 
 
+class FailCaseModeTest(unittest.TestCase):
+    """모드 4: FAIL 케이스 무작위 생성 + 결과 대조."""
+
+    def test_every_type_matches_expectation(self):
+        for seed in range(30):
+            rows = main.check_fail_cases(main.generate_fail_cases(40, seed))
+            for row in rows:
+                self.assertTrue(row["matched"], (seed, row["item"]["kind"], row["result"]["reason"]))
+
+    def test_same_seed_same_cases(self):
+        first = main.generate_fail_cases(15, 7)
+        second = main.generate_fail_cases(15, 7)
+        self.assertEqual([(c["key"], c["kind"], c["case"]) for c in first],
+                         [(c["key"], c["kind"], c["case"]) for c in second])
+
+    def test_all_types_present_when_count_allows(self):
+        kinds = {c["kind"] for c in main.generate_fail_cases(len(main.FAIL_TYPES), 3)}
+        self.assertEqual(kinds, set(main.FAIL_TYPES))
+
+    def test_tie_cases_are_real_ties(self):
+        rng = main.random.Random(0)
+        for kind in ("tie_weight", "near_tie"):
+            for index in range(20):
+                item = main.make_fail_case(kind, index, rng)
+                result = main.analyze_case(item["key"], item["case"], {item["size"]: item["filters"]}, {})
+                self.assertEqual(result["decision"], main.UNDECIDED, kind)
+                self.assertLess(abs(result["cross"] - result["x"]), main.EPSILON)
+
+    def test_near_win_is_decided(self):
+        rng = main.random.Random(1)
+        for index in range(20):
+            item = main.make_fail_case("near_win", index, rng)
+            result = main.analyze_case(item["key"], item["case"], {item["size"]: item["filters"]}, {})
+            self.assertTrue(result["passed"])
+            self.assertGreater(abs(result["cross"] - result["x"]), main.EPSILON)
+
+    def test_detects_broken_logic(self):
+        # 판정 로직이 망가지면(epsilon 무시) 대조에서 불일치가 나와야 한다.
+        original = main.EPSILON
+        try:
+            main.judge.__defaults__ = (0.0,)
+            rows = main.check_fail_cases(main.generate_fail_cases(40, 5))
+            self.assertTrue(any(not row["matched"] for row in rows))
+        finally:
+            main.judge.__defaults__ = (original,)
+
+    def test_command_line_and_save(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "cases.json"
+            code = quiet(main.main, ["main.py", "--fail-cases", "--seed", "42", "--count", "20", "--save", str(path)])
+            self.assertEqual(code, 0)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(data["seed"], 42)
+            self.assertEqual(len(data["cases"]), 20)
+
+    def test_bad_options(self):
+        for args in (["--seed"], ["--count", "0"], ["--count", "abc"], ["--what", "1"]):
+            code = quiet(main.main, ["main.py", "--fail-cases"] + args)
+            self.assertEqual(code, 2, args)
+
+
 if __name__ == "__main__":
     unittest.main()

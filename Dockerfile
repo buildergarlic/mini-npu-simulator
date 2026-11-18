@@ -3,6 +3,8 @@
 # 빌드: docker build -t mini-npu-simulator .
 # 실행: docker run --rm -it mini-npu-simulator
 # 테스트: docker run --rm --entrypoint python mini-npu-simulator -m unittest -v
+# 모드 4: docker run --rm mini-npu-simulator --fail-cases --seed 42 --count 20
+#   저장: docker run --rm -v "$(pwd)/out:/out" mini-npu-simulator --fail-cases --seed 42 --save /out/cases.json
 
 # 파이썬 버전을 정확히 고정해 누가 빌드해도 같은 환경(같은 계산 결과)이 되게 한다.
 # 최소 지원 버전 확인: docker build --build-arg PYTHON_VERSION=3.8 -t mini-npu-simulator:py3.8 .
@@ -20,7 +22,10 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # 관리자(root)가 아닌 일반 사용자(uid 1000)로 실행한다.
-RUN useradd --create-home --uid 1000 npu
+# /out: 모드 4가 생성한 케이스 파일(--save)을 컨테이너 밖으로 꺼낼 때 연결하는 폴더
+RUN useradd --create-home --uid 1000 npu \
+    && mkdir -p /out \
+    && chown npu:npu /out
 
 # 프로그램, 미션 데이터, 오류 샘플, 테스트를 복사한다. (외부 라이브러리가 없어서 pip 설치 단계가 없다)
 COPY --chown=npu:npu main.py test_main.py data.json ./
