@@ -5,10 +5,13 @@ MAC(Multiply-Accumulate) 연산으로 입력 패턴이 십자가(Cross)인지 X�
 실행 방법:
     python main.py                 # 같은 폴더의 data.json 사용
     python main.py other.json      # 다른 JSON 파일로 모드 2 실행
+    python main.py --fail-cases --seed 42 --count 20 [--save cases.json]
+                                   # 모드 4를 메뉴 없이 바로 실행
 """
 
 import json
 import math
+import random
 import re
 import sys
 import time
@@ -764,23 +767,360 @@ def run_generator_mode():
 
 
 # =============================================================
-# 9. 메뉴 / 실행
+# 9. 모드 4: FAIL 케이스 무작위 생성 + 결과 대조
+# =============================================================
+# 실패가 나야 하는 상황을 무작위로 만들고, 각 케이스에 "어떤 결과가 나와야 하는지(기대 결과)"를
+# 미리 적어 둔다. 그다음 모드 2와 똑같은 analyze_case()로 판정해 실제 결과와 대조한다.
+# 기대와 실제가 모두 같으면, 프로그램이 실패를 정확한 원인으로 잡아내고 있다는 뜻이다.
+FAIL_SIZES = [3, 5, 7, 13, 25]  # 생성할 패턴 크기 후보
+DEFAULT_FAIL_COUNT = 12  # 기본 생성 개수
+MAX_FAIL_COUNT = 500
+
+# 유형 코드 → (화면 이름, 기대 결과 설명). 기대 원인 None = PASS가 나와야 하는 대조군
+FAIL_TYPES = {
+    "control": ("정상 (대조군)", None),
+    "near_win": ("근소한 승리 (차이 > ε)", None),
+    "tie_weight": ("가중치 설계 동점", CAUSE_NUMERIC),
+    "near_tie": ("ε 미만 근소 차이", CAUSE_NUMERIC),
+    "wrong_label": ("expected 라벨 뒤바뀜", CAUSE_MISMATCH),
+    "size_mismatch": ("패턴·필터 크기 불일치", CAUSE_SCHEMA),
+    "bad_label": ("알 수 없는 라벨", CAUSE_SCHEMA),
+    "bad_value": ("숫자가 아닌 값", CAUSE_SCHEMA),
+    "missing_field": ("필수 항목 누락", CAUSE_SCHEMA),
+}
+FAIL_TYPE_ORDER = list(FAIL_TYPES)
+
+
+def _rows(grid):
+    """Grid를 JSON에 넣을 수 있는 2차원 리스트로 바꾼다."""
+    return [list(row) for row in grid.cells]
+
+
+def _standard_filters(size):
+    return {CROSS: generate_cross(size), X: generate_x(size)}
+
+
+def _other(label):
+    return X if label == CROSS else CROSS
+
+
+def _tie_filters(label, size, weight):
+    """data.json의 동점 함정과 같은 구조: 정답 필터는 모양 칸마다 weight, 반대 필터는 가운데 한 칸에 총량.
+
+    정답 모양 패턴과 곱하면 두 점수가 수학적으로 똑같이 (2N-1)×weight가 된다.
+    (정답 쪽은 weight를 2N-1번 더해 부동소수점 오차가 생길 수 있다.)
+    """
+    shape = GENERATORS[label](size)
+    own = Grid(size)
+    for i in range(size):
+        for j in range(size):
+            if shape.get(i, j):
+                own.set(i, j, weight)
+    other = Grid(size)
+    middle = size // 2
+    other.set(middle, middle, weight * (2 * size - 1))
+    return {label: own, _other(label): other}
+
+
+def _gap_filters(label, size, gap):
+    """정답 모양 필터(1)와, 가운데 칸에 (2N-1)+gap을 둔 반대 필터. 반대 쪽이 gap만큼 높다."""
+    other = Grid(size)
+    middle = size // 2
+    other.set(middle, middle, (2 * size - 1) + gap)
+    return {label: GENERATORS[label](size), _other(label): other}
+
+
+def make_fail_case(kind, index, rng):
+    """유형(kind)에 맞는 케이스 1개를 만든다.
+
+    반환: {"key", "kind", "size", "case"(data.json 패턴 항목), "filters"(Grid), "expect_pass", "expect_cause", "note"}
+    """
+    size = rng.choice(FAIL_SIZES)
+    label = rng.choice(STANDARD_LABELS)
+    key = f"size_{size}_{index}"
+    pattern = GENERATORS[label](size)
+    raw_label = rng.choice([alias for alias, std in LABEL_ALIASES.items() if std == label])
+    case = {"input": _rows(pattern), "expected": raw_label}
+    filters = _standard_filters(size)
+    note = f"{label} 모양, expected '{raw_label}'"
+
+    if kind == "near_win":
+        gap = rng.choice([1e-6, 1e-4, 0.01])
+        filters = _gap_filters(label, size, -gap)  # 정답 쪽이 gap만큼 이긴다 (ε보다 크다)
+        note = f"정답 필터가 {fmt_sci(gap)}만큼 높음 (ε {EPSILON_TEXT}보다 큼)"
+    elif kind == "tie_weight":
+        weight = rng.choice([0.1, 0.2, 0.3, 0.7])
+        filters = _tie_filters(label, size, weight)
+        note = f"{weight:g}×{2 * size - 1}칸 = 가운데 한 칸 {weight * (2 * size - 1):g}"
+    elif kind == "near_tie":
+        gap = rng.choice([1e-13, 1e-12, 1e-11, 1e-10])
+        filters = _gap_filters(label, size, gap)  # 반대 쪽이 아주 조금 높다 (ε보다 작다)
+        note = f"반대 필터가 {fmt_sci(gap)}만큼 높음 (ε 미만이라 동점)"
+    elif kind == "wrong_label":
+        raw_label = rng.choice([alias for alias, std in LABEL_ALIASES.items() if std != label])
+        case["expected"] = raw_label
+        note = f"{label} 모양인데 expected '{raw_label}'"
+    elif kind == "size_mismatch":
+        other_size = rng.choice([n for n in FAIL_SIZES if n != size])
+        case["input"] = _rows(GENERATORS[label](other_size))
+        note = f"키는 size_{size}, 패턴은 {other_size}×{other_size}"
+    elif kind == "bad_label":
+        raw_label = rng.choice(["o", "plus", "십자", "", "X모양"])
+        case["expected"] = raw_label
+        note = f"expected {raw_label!r}"
+    elif kind == "bad_value":
+        bad = rng.choice(["1", True, None, "NaN"])
+        row, col = rng.randrange(size), rng.randrange(size)
+        case["input"][row][col] = bad
+        note = f"[{row}][{col}] 칸 = {bad!r}"
+    elif kind == "missing_field":
+        field = rng.choice(["input", "expected"])
+        del case[field]
+        note = f"'{field}' 항목 없음"
+
+    expect_cause = FAIL_TYPES[kind][1]
+    return {
+        "key": key,
+        "kind": kind,
+        "size": size,
+        "case": case,
+        "filters": filters,
+        "expect_pass": expect_cause is None,
+        "expect_cause": expect_cause,
+        "note": note,
+    }
+
+
+def generate_fail_cases(count, seed):
+    """seed가 같으면 언제나 같은 케이스 묶음을 만든다.
+
+    앞 부분은 모든 유형을 한 번씩(개수가 허락하는 만큼) 넣고, 나머지는 실패 유형 위주로 무작위로 고른다.
+    """
+    rng = random.Random(seed)
+    kinds = FAIL_TYPE_ORDER[:]
+    rng.shuffle(kinds)
+    kinds = kinds[:count]
+    fail_kinds = [k for k in FAIL_TYPE_ORDER if FAIL_TYPES[k][1] is not None]
+    while len(kinds) < count:
+        kinds.append(rng.choice(fail_kinds + ["control"]))  # 대조군도 가끔 섞는다
+    return [make_fail_case(kind, index, rng) for index, kind in enumerate(kinds)]
+
+
+def naive_decision(result):
+    """epsilon 없이 '>'로만 비교했다면 나왔을 판정 (수치 비교 케이스의 위험성을 보여 주기 위함)."""
+    if result["cross"] is None:
+        return "-"
+    if result["cross"] == result["x"]:
+        return "완전 동점"
+    return CROSS if result["cross"] > result["x"] else X
+
+
+def check_fail_cases(cases):
+    """각 케이스를 analyze_case()로 판정하고 기대 결과와 대조한다."""
+    rows = []
+    for item in cases:
+        filters = {item["size"]: item["filters"]}
+        result = analyze_case(item["key"], item["case"], filters, {})
+        matched = result["passed"] == item["expect_pass"] and result["cause"] == item["expect_cause"]
+        rows.append({"item": item, "result": result, "matched": matched})
+    return rows
+
+
+def _outcome(passed, cause):
+    return "PASS" if passed else f"FAIL·{cause}"
+
+
+def print_fail_report(rows):
+    table = []
+    for number, row in enumerate(rows, start=1):
+        item, result = row["item"], row["result"]
+        table.append([
+            str(number),
+            item["key"],
+            FAIL_TYPES[item["kind"]][0],
+            _outcome(item["expect_pass"], item["expect_cause"]),
+            _outcome(result["passed"], result["cause"]),
+            naive_decision(result) if item["kind"] in ("tie_weight", "near_tie", "near_win") else "",
+            "일치" if row["matched"] else "불일치",
+        ])
+    print_table(
+        ["#", "키", "주입한 상황", "기대 결과", "실제 결과", "ε 없이 '>' 비교", "대조"],
+        table,
+        ["right", "left", "left", "left", "left", "left", "left"],
+    )
+
+    print("\n[케이스 상세]")
+    for number, row in enumerate(rows, start=1):
+        item, result = row["item"], row["result"]
+        detail = result["reason"] if not result["passed"] else f"판정 {result['decision']} = expected"
+        scores = ""
+        if result["cross"] is not None:
+            scores = f" | Cross {result['cross']!r}, X {result['x']!r}"
+        print(f"{number:>2}. {item['note']}{scores}")
+        print(f"    → {detail}")
+
+
+def print_fail_summary(rows):
+    total = len(rows)
+    matched = sum(1 for row in rows if row["matched"])
+    actual_fail = sum(1 for row in rows if not row["result"]["passed"])
+    print(f"생성한 케이스: {total}개 (실제 FAIL {actual_fail}개, PASS {total - actual_fail}개)")
+    print(f"기대 결과와 일치: {matched}/{total}")
+
+    by_kind = {}
+    for row in rows:
+        kind = row["item"]["kind"]
+        done, count = by_kind.get(kind, (0, 0))
+        by_kind[kind] = (done + (1 if row["matched"] else 0), count + 1)
+    print("\n유형별 대조:")
+    for kind in FAIL_TYPE_ORDER:
+        if kind in by_kind:
+            done, count = by_kind[kind]
+            expect = _outcome(FAIL_TYPES[kind][1] is None, FAIL_TYPES[kind][1])
+            print(f"- {FAIL_TYPES[kind][0]} → 기대 {expect}: {done}/{count} 일치")
+
+    mismatches = [row for row in rows if not row["matched"]]
+    if mismatches:
+        print("\n⚠️ 기대와 다른 케이스가 있습니다. 판정 로직이나 검증 규칙을 확인하세요:")
+        for row in mismatches:
+            item, result = row["item"], row["result"]
+            print(f"- {item['key']} ({FAIL_TYPES[item['kind']][0]}): 기대 "
+                  f"{_outcome(item['expect_pass'], item['expect_cause'])}, 실제 "
+                  f"{_outcome(result['passed'], result['cause'])} — {result['reason']}")
+    else:
+        print("\n✓ 모든 케이스가 기대한 결과(PASS 또는 정확한 FAIL 원인)로 판정되었습니다.")
+    return matched == total
+
+
+def save_fail_cases(cases, seed, path):
+    """생성한 케이스를 JSON으로 저장한다. 케이스마다 필터가 달라서 data.json과 달리 케이스 안에 필터를 넣는다."""
+    data = {
+        "seed": seed,
+        "epsilon": EPSILON,
+        "cases": [
+            {
+                "key": item["key"],
+                "type": item["kind"],
+                "description": FAIL_TYPES[item["kind"]][0],
+                "note": item["note"],
+                "expected_result": _outcome(item["expect_pass"], item["expect_cause"]),
+                "filters": {"cross": _rows(item["filters"][CROSS]), "x": _rows(item["filters"][X])},
+                "pattern": item["case"],
+            }
+            for item in cases
+        ],
+    }
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=2)
+
+
+def read_count():
+    guide = f"1 이상 {MAX_FAIL_COUNT} 이하의 정수를 입력하세요."
+    while True:
+        raw = input(f"생성할 케이스 수 (Enter = {DEFAULT_FAIL_COUNT}): ").strip()
+        if raw == "":
+            return DEFAULT_FAIL_COUNT
+        try:
+            count = int(raw)
+        except ValueError:
+            print(f"입력 형식 오류: '{raw}'은(는) 정수가 아닙니다. {guide}")
+            continue
+        if not 1 <= count <= MAX_FAIL_COUNT:
+            print(f"입력 형식 오류: {guide}")
+            continue
+        return count
+
+
+def read_seed():
+    while True:
+        raw = input("시드 (같은 시드 = 같은 케이스, Enter = 무작위): ").strip()
+        if raw == "":
+            return random.SystemRandom().randrange(1, 1_000_000)
+        try:
+            return int(raw)
+        except ValueError:
+            print(f"입력 형식 오류: '{raw}'은(는) 정수가 아닙니다.")
+
+
+def run_fail_mode(count=None, seed=None, save_path=None):
+    """모드 4: FAIL 케이스 무작위 생성 → 모드 2와 같은 판정 → 기대 결과와 대조. 모두 일치하면 True."""
+    print_section("[1] FAIL 케이스 생성 설정")
+    if count is None:
+        count = read_count()
+    if seed is None:
+        seed = read_seed()
+    print(f"케이스 수: {count}개 | 시드: {seed} | ε = {EPSILON_TEXT}")
+    print(f"(같은 결과 재현: python main.py --fail-cases --seed {seed} --count {count})")
+    cases = generate_fail_cases(count, seed)
+
+    print_section("[2] 판정 결과 대조 (모드 2와 같은 analyze_case 사용)")
+    rows = check_fail_cases(cases)
+    print_fail_report(rows)
+
+    print_section("[3] 대조 요약")
+    all_matched = print_fail_summary(rows)
+
+    if save_path:
+        save_fail_cases(cases, seed, save_path)
+        print(f"\n생성한 케이스를 저장했습니다: {save_path}")
+    return all_matched
+
+
+def parse_fail_args(args):
+    """--fail-cases 뒤의 옵션(--seed N, --count N, --save 경로)을 읽는다. 잘못되면 ValueError."""
+    options = {"seed": None, "count": DEFAULT_FAIL_COUNT, "save_path": None}
+    i = 0
+    while i < len(args):
+        name = args[i]
+        if name not in ("--seed", "--count", "--save") or i + 1 >= len(args):
+            raise ValueError(f"알 수 없거나 값이 빠진 옵션: {name}")
+        value = args[i + 1]
+        if name == "--save":
+            options["save_path"] = value
+        else:
+            try:
+                number = int(value)
+            except ValueError:
+                raise ValueError(f"{name} 값은 정수여야 합니다: {value!r}") from None
+            if name == "--count" and not 1 <= number <= MAX_FAIL_COUNT:
+                raise ValueError(f"--count는 1 이상 {MAX_FAIL_COUNT} 이하여야 합니다.")
+            options["seed" if name == "--seed" else "count"] = number
+        i += 2
+    if options["seed"] is None:
+        options["seed"] = random.SystemRandom().randrange(1, 1_000_000)
+    return options
+
+
+# =============================================================
+# 10. 메뉴 / 실행
 # =============================================================
 def choose_mode():
     print("\n[모드 선택]")
     print("1. 사용자 입력 (3x3)")
     print("2. data.json 분석")
     print("3. 패턴 생성기 + 크기별 성능 분석 (보너스)")
+    print("4. FAIL 케이스 무작위 생성 + 결과 대조")
     print("0. 종료")
     while True:
         choice = input("선택: ").strip()
-        if choice in ("0", "1", "2", "3"):
+        if choice in ("0", "1", "2", "3", "4"):
             return choice
-        print("⚠️ 0, 1, 2, 3 중 하나를 입력하세요.")
+        print("⚠️ 0, 1, 2, 3, 4 중 하나를 입력하세요.")
 
 
 def main(argv=None):
     argv = sys.argv if argv is None else argv
+    if len(argv) > 1 and argv[1] == "--fail-cases":
+        # 메뉴 없이 모드 4만 실행 (자동 검사·Docker용). 모두 기대와 일치하면 종료 코드 0, 아니면 1
+        try:
+            options = parse_fail_args(argv[2:])
+        except ValueError as error:
+            print(f"옵션 오류: {error}")
+            print("사용법: python main.py --fail-cases [--seed N] [--count N] [--save 파일.json]")
+            return 2
+        print("=== Mini NPU Simulator — FAIL 케이스 생성·대조 ===")
+        return 0 if run_fail_mode(**options) else 1
+
     data_path = Path(argv[1]) if len(argv) > 1 else DEFAULT_DATA_PATH
     print("=== Mini NPU Simulator ===")
     try:
@@ -792,12 +1132,15 @@ def main(argv=None):
                 run_user_mode()
             elif choice == "2":
                 run_json_mode(data_path)
-            else:
+            elif choice == "3":
                 run_generator_mode()
+            else:
+                run_fail_mode()
     except (KeyboardInterrupt, EOFError):
         print("\n\n입력이 중단되었습니다.")
     print("프로그램을 종료합니다.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
